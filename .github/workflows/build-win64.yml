@@ -1,0 +1,110 @@
+name: Build mGBA Windows x64
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - master
+
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build-win64:
+    name: Build Windows x64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Show source revision
+        run: |
+          echo "Commit:"
+          git rev-parse HEAD
+          echo "Branch:"
+          git branch --show-current
+
+      - name: Build mGBA Windows x64
+        run: |
+          set -euxo pipefail
+
+          docker run --rm \
+            -v "$PWD:/home/mgba/src" \
+            -e MAKEFLAGS="-j$(nproc)" \
+            mgba/windows:w64
+
+      - name: Check build output
+        run: |
+          set -euxo pipefail
+
+          echo "=== Repository ==="
+          ls -lah
+
+          echo "=== build-win64 ==="
+          find build-win64 -maxdepth 3 -type f | sort | head -300
+
+          test -d build-win64
+
+          echo "=== Search executables ==="
+          find build-win64 -type f \
+            \( -iname "mGBA.exe" -o -iname "mgba.exe" -o -iname "*.exe" \) \
+            -print
+
+          test -n "$(find build-win64 -type f \
+            \( -iname 'mGBA.exe' -o -iname 'mgba.exe' \) \
+            -print -quit)"
+
+      - name: Create distribution package
+        run: |
+          set -euxo pipefail
+
+          cd build-win64
+
+          if command -v cpack >/dev/null 2>&1; then
+            cpack -G ZIP || true
+          fi
+
+          echo "=== ZIP files ==="
+          find . -maxdepth 2 -type f -iname "*.zip" -print
+
+      - name: Prepare artifact
+        run: |
+          set -euxo pipefail
+
+          mkdir -p artifact
+
+          # Prefer a CPack ZIP if the Docker build produced one.
+          ZIP_FILE="$(find build-win64 -maxdepth 3 -type f -iname '*.zip' | head -n 1 || true)"
+
+          if [ -n "$ZIP_FILE" ]; then
+            cp "$ZIP_FILE" artifact/
+          else
+            # Fallback: package the complete build-win64 directory.
+            # This still contains the executable and all files generated
+            # by the official mGBA Windows x64 build environment.
+            cd build-win64
+            zip -r "../artifact/mGBA-windows-x64.zip" .
+            cd ..
+          fi
+
+          echo "=== Final artifact ==="
+          ls -lah artifact
+
+          test -n "$(find artifact -type f -iname '*.zip' -print -quit)"
+
+      - name: Upload Windows x64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: mGBA-Windows-x64
+          path: artifact/*.zip
+          if-no-files-found: error
+          retention-days: 30

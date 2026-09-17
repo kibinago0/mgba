@@ -28,83 +28,80 @@ jobs:
 
       - name: Show source revision
         run: |
-          echo "Commit:"
+          set -euxo pipefail
+
           git rev-parse HEAD
-          echo "Branch:"
           git branch --show-current
 
-      - name: Build mGBA Windows x64
+      - name: Build with official mGBA Windows x64 Docker image
         run: |
           set -euxo pipefail
 
+          # The official mGBA Windows image uses a different UID
+          # from the GitHub Actions runner. Running it as root allows
+          # it to create build-win64 inside the checked-out repository.
           docker run --rm \
+            --user 0:0 \
             -v "$PWD:/home/mgba/src" \
             -e MAKEFLAGS="-j$(nproc)" \
             mgba/windows:w64
 
-      - name: Check build output
+      - name: Verify Windows build
         run: |
           set -euxo pipefail
-
-          echo "=== Repository ==="
-          ls -lah
-
-          echo "=== build-win64 ==="
-          find build-win64 -maxdepth 3 -type f | sort | head -300
 
           test -d build-win64
 
-          echo "=== Search executables ==="
-          find build-win64 -type f \
-            \( -iname "mGBA.exe" -o -iname "mgba.exe" -o -iname "*.exe" \) \
-            -print
+          echo "=== Build output ==="
+          find build-win64 -maxdepth 3 -type f | sort | head -300
 
-          test -n "$(find build-win64 -type f \
+          echo "=== Executables ==="
+          find build-win64 -type f -iname '*.exe' -print
+
+          MGBA_EXE="$(find build-win64 -type f \
             \( -iname 'mGBA.exe' -o -iname 'mgba.exe' \) \
             -print -quit)"
 
-      - name: Create distribution package
+          test -n "$MGBA_EXE"
+
+          echo "mGBA executable:"
+          echo "$MGBA_EXE"
+
+          echo "=== PE check ==="
+          file "$MGBA_EXE"
+
+          file "$MGBA_EXE" | grep -Eiq \
+            'PE32\+.*x86-64|Windows.*x86-64|PE32\+.*AMD64'
+
+      - name: Package complete Windows build
         run: |
           set -euxo pipefail
 
-          cd build-win64
-
-          if command -v cpack >/dev/null 2>&1; then
-            cpack -G ZIP || true
-          fi
-
-          echo "=== ZIP files ==="
-          find . -maxdepth 2 -type f -iname "*.zip" -print
-
-      - name: Prepare artifact
-        run: |
-          set -euxo pipefail
-
+          rm -rf artifact
           mkdir -p artifact
 
-          # Prefer a CPack ZIP if the Docker build produced one.
-          ZIP_FILE="$(find build-win64 -maxdepth 3 -type f -iname '*.zip' | head -n 1 || true)"
+          # Package the complete build tree.
+          # This keeps mGBA.exe together with its required DLLs
+          # and runtime files.
+          cd build-win64
 
-          if [ -n "$ZIP_FILE" ]; then
-            cp "$ZIP_FILE" artifact/
-          else
-            # Fallback: package the complete build-win64 directory.
-            # This still contains the executable and all files generated
-            # by the official mGBA Windows x64 build environment.
-            cd build-win64
-            zip -r "../artifact/mGBA-windows-x64.zip" .
-            cd ..
-          fi
+          zip -9 -r ../artifact/mGBA-windows-x64.zip .
 
-          echo "=== Final artifact ==="
-          ls -lah artifact
+          cd ..
 
-          test -n "$(find artifact -type f -iname '*.zip' -print -quit)"
+          echo "=== Package ==="
+          ls -lh artifact/mGBA-windows-x64.zip
 
-      - name: Upload Windows x64 build
+          echo "=== Package contents ==="
+          unzip -l artifact/mGBA-windows-x64.zip | head -100
+
+          test -s artifact/mGBA-windows-x64.zip
+
+      - name: Upload Windows x64 package
         uses: actions/upload-artifact@v4
         with:
           name: mGBA-Windows-x64
-          path: artifact/*.zip
+          path: artifact/mGBA-windows-x64.zip
           if-no-files-found: error
+          compression-level: 0
           retention-days: 30

@@ -1,4 +1,4 @@
-name: Repomix - mGBA Source Code to Google Drive
+name: Repomix - mGBA Core Source to Google Drive
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
 
     steps:
       # ========================================
-      # 1. mGBAを取得
+      # 1. Checkout
       # ========================================
       - name: Checkout mGBA
         uses: actions/checkout@v4
@@ -33,6 +33,8 @@ jobs:
 
       # ========================================
       # 3. Repomix
+      #
+      # src / include のコードだけ
       # ========================================
       - name: Run Repomix
         run: |
@@ -40,8 +42,9 @@ jobs:
             --style markdown \
             --remove-empty-lines \
             --output-show-line-numbers \
-            --include "**/*.c,**/*.h,**/*.cc,**/*.cpp,**/*.cxx,**/*.hh,**/*.hpp,**/*.hxx,**/*.S,**/*.s,**/*.asm,**/*.inc,**/*.inl,**/*.ixx" \
-            --ignore "tests/**,tools/**,3rdparty/**,res/**,assets/**,.github/**,**/test/**,**/tests/**,**/test_*.c,**/*_test.c,**/test_*.cpp,**/*_test.cpp"
+            --include "src/**/*.c,src/**/*.h,src/**/*.cc,src/**/*.cpp,src/**/*.cxx,src/**/*.hh,src/**/*.hpp,src/**/*.hxx,src/**/*.S,src/**/*.s,src/**/*.asm,src/**/*.inc,src/**/*.inl,src/**/*.ixx,include/**/*.c,include/**/*.h,include/**/*.cc,include/**/*.cpp,include/**/*.cxx,include/**/*.hh,include/**/*.hpp,include/**/*.hxx,include/**/*.S,include/**/*.s,include/**/*.asm,include/**/*.inc,include/**/*.inl,include/**/*.ixx" \
+            --ignore "src/third-party/**,src/test/**,src/tests/**,src/**/test/**,src/**/tests/**,include/third-party/**,include/test/**,include/tests/**"
+
       # ========================================
       # 4. NotebookLM用に分割
       # ========================================
@@ -53,16 +56,14 @@ jobs:
           source = Path("repomix-output.md")
           text = source.read_text(encoding="utf-8")
 
-          # NotebookLM用に余裕を持たせる
-          # 1ファイル最大300,000文字
+          # NotebookLM用。
+          # 1ファイル300,000文字以下。
           MAX_CHARS = 300000
-
-          lines = text.splitlines(keepends=True)
 
           parts = []
           current = ""
 
-          for line in lines:
+          for line in text.splitlines(keepends=True):
               if len(current) + len(line) > MAX_CHARS:
                   if current:
                       parts.append(current)
@@ -90,7 +91,7 @@ jobs:
           PY
 
       # ========================================
-      # 5. Google Drive APIライブラリ
+      # 5. Google Drive API
       # ========================================
       - name: Install Google Drive libraries
         run: |
@@ -98,7 +99,7 @@ jobs:
           pip install google-api-python-client google-auth google-auth-httplib2
 
       # ========================================
-      # 6. Google Driveへアップロード
+      # 6. Google Driveへ同期
       # ========================================
       - name: Upload to Google Drive
         env:
@@ -114,10 +115,6 @@ jobs:
           from google.oauth2.credentials import Credentials
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
-
-          # ========================================
-          # OAuth
-          # ========================================
 
           credentials = Credentials(
               token=None,
@@ -138,39 +135,27 @@ jobs:
 
           folder_id = os.environ["GOOGLE_DRIVE_FOLDER_ID"]
 
-          # ========================================
-          # 分割されたMarkdownを取得
-          # ========================================
-
-          files_to_upload = sorted(
+          local_files = sorted(
               Path(".").glob("mGBA-repomix-*.md")
           )
 
-          if not files_to_upload:
+          if not local_files:
               raise RuntimeError(
-                  "No split Repomix files found."
+                  "No Repomix files were generated."
               )
-
-          print(
-              f"Found {len(files_to_upload)} "
-              f"Repomix files."
-          )
-
-          # ========================================
-          # Google Driveへアップロード / 更新
-          # ========================================
 
           current_names = set()
 
-          for local_file in files_to_upload:
+          # ========================================
+          # Upload / Update
+          # ========================================
+
+          for local_file in local_files:
 
               file_name = local_file.name
               current_names.add(file_name)
 
-              print()
-              print(
-                  f"Processing: {file_name}"
-              )
+              print(f"Processing: {file_name}")
 
               query = (
                   f"'{folder_id}' in parents "
@@ -184,10 +169,7 @@ jobs:
                   fields="files(id,name)",
               ).execute()
 
-              existing_files = result.get(
-                  "files",
-                  []
-              )
+              existing = result.get("files", [])
 
               media = MediaFileUpload(
                   str(local_file),
@@ -195,18 +177,16 @@ jobs:
                   resumable=True,
               )
 
-              if existing_files:
+              if existing:
 
-                  file_id = existing_files[0]["id"]
+                  file_id = existing[0]["id"]
 
                   service.files().update(
                       fileId=file_id,
                       media_body=media,
                   ).execute()
 
-                  print(
-                      f"Updated: {file_name}"
-                  )
+                  print(f"Updated: {file_name}")
 
               else:
 
@@ -229,30 +209,18 @@ jobs:
           # ========================================
           # 古い分割ファイルを削除
           # ========================================
-          #
-          # 以前は10ファイルあったが、
-          # 今回は8ファイルになった場合などに
-          # 余ったファイルをDriveから削除する。
-          # ========================================
-
-          query = (
-              f"'{folder_id}' in parents "
-              "and trashed = false"
-          )
 
           result = service.files().list(
-              q=query,
+              q=(
+                  f"'{folder_id}' in parents "
+                  "and trashed = false"
+              ),
               spaces="drive",
               fields="files(id,name)",
               pageSize=1000,
           ).execute()
 
-          drive_files = result.get(
-              "files",
-              []
-          )
-
-          for drive_file in drive_files:
+          for drive_file in result.get("files", []):
 
               name = drive_file["name"]
 
@@ -263,27 +231,25 @@ jobs:
               ):
 
                   print(
-                      f"Deleting old file: "
-                      f"{name}"
+                      f"Deleting old file: {name}"
                   )
 
                   service.files().delete(
                       fileId=drive_file["id"]
                   ).execute()
 
-          print()
           print(
               "Google Drive synchronization "
-              "completed successfully."
+              "completed."
           )
           PY
 
       # ========================================
-      # 7. GitHub Actions Artifactにも保存
+      # 7. GitHub Artifact
       # ========================================
       - name: Upload Repomix artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mGBA-Source-Code-Repomix
+          name: mGBA-Core-Source-Repomix
           path: mGBA-repomix-*.md
           if-no-files-found: error

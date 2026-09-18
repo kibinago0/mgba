@@ -40,8 +40,8 @@ jobs:
             --style markdown \
             --remove-empty-lines \
             --output-show-line-numbers \
-            --include "**/*.c,**/*.h,**/*.cc,**/*.cpp,**/*.cxx,**/*.hh,**/*.hpp,**/*.hxx,**/*.S,**/*.s,**/*.asm,**/*.inc,**/*.inl,**/*.ixx,**/CMakeLists.txt,**/*.cmake"
-
+            --include "**/*.c,**/*.h,**/*.cc,**/*.cpp,**/*.cxx,**/*.hh,**/*.hpp,**/*.hxx,**/*.S,**/*.s,**/*.asm,**/*.inc,**/*.inl,**/*.ixx" \
+            --ignore "tests/**,tools/**,3rdparty/**,res/**,assets/**,.github/**,**/test/**,**/tests/**,**/test_*.c,**/*_test.c,**/test_*.cpp,**/*_test.cpp"
       # ========================================
       # 4. NotebookLM用に分割
       # ========================================
